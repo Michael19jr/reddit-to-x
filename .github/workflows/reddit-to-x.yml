@@ -1,0 +1,72 @@
+name: Reddit to X
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run without posting (just log what would go out)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: reddit-to-x
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          SUBREDDIT: GamingLeaksAndRumours
+          LISTINGS: "new"
+          MIN_SCORE: "0"
+          LINK_MODE: inline
+          POSTER: buffer
+          MAX_POSTS_PER_RUN: "50"
+          MAX_AGE_HOURS: "6"
+          SKIP_NSFW: "true"
+          SKIP_STICKIED: "true"
+          USER_AGENT: "script:reddit-to-x:v1.0 (by /u/Michael19jr)"
+
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+
+          BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
+          BUFFER_PROFILE_ID: ${{ secrets.BUFFER_PROFILE_ID }}
+        run: python bot.py
+
+      - name: Save state
+        if: always()
+        run: |
+          if [[ -n "$(git status --porcelain posted.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add posted.json
+            git commit -m "chore: update posted state [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+                git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+              sleep 5
+            done
+            echo "Could not push state after 3 attempts" >&2
+            exit 1
+          else
+            echo "No state change."
+          fi
